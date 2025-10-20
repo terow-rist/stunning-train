@@ -1,0 +1,18 @@
+# Database Configuration
+database:
+  host: localhost
+  port: 5432
+  user: ridehail_user
+  password: ridehail_pass
+  database: ridehail_db
+
+# RabbitMQ Configuration
+rabbitmq:
+  host: localhost
+  port: 5672
+  user: guest
+  password: guest
+
+# WebSocket Configuration
+websocket:
+  port: 8080
