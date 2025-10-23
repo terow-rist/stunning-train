@@ -57,11 +57,11 @@ func Load(cfgPath string) (*Config, error) {
 	for sc.Scan() {
 		lineNo++
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix("#", line) {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		if strings.HasSuffix(":", line) && !strings.Contains(" ", line) && !strings.Contains("\t", line) {
+		if strings.HasSuffix(line, ":") && !strings.Contains(line, " ") && !strings.Contains("\t", line) {
 			sec := strings.TrimSuffix(line, ":") 
 			switch sec {
 			case "database", "rabbitmq", "websocket":
