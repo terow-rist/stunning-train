@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"syscall"
-	"time"
-
 	"ride-hail/internal/common/config"
 	"ride-hail/internal/common/db"
 	"ride-hail/internal/common/log"
 	"ride-hail/internal/common/rabbitmq"
 	"ride-hail/internal/ride/adapters/repository"
+	"syscall"
+	"time"
 )
 
 func main() {
@@ -46,7 +45,6 @@ func main() {
 	}
 
 	_ = repository.NewRideRepository(dbPool)
-	
 
 	log.Info(ctx, logger, "db_connected", "Successfully connected to database")
 
