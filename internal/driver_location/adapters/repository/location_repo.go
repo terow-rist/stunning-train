@@ -3,19 +3,11 @@ package repository
 import (
 	"context"
 	"fmt"
+	"ride-hail/internal/driver_location/domain"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// LocationUpdate is reused in API; placed here for repo boundaries.
-type LocationUpdate struct {
-	DriverID  string
-	Latitude  float64
-	Longitude float64
-	// optional: AccuracyMeters, SpeedKmh, HeadingDegrees
-	RecordedAt time.Time
-}
 
 type LocationRepository struct {
 	db *pgxpool.Pool
@@ -27,7 +19,7 @@ func NewLocationRepository(db *pgxpool.Pool) *LocationRepository {
 
 // SaveLocation updates is_current flags and inserts a new coordinates row.
 // This operation is transactional.
-func (r *LocationRepository) SaveLocation(ctx context.Context, loc LocationUpdate) error {
+func (r *LocationRepository) SaveLocation(ctx context.Context, loc domain.LocationUpdate) error {
 	if loc.RecordedAt.IsZero() {
 		loc.RecordedAt = time.Now().UTC()
 	}

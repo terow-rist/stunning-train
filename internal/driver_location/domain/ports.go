@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"ride-hail/internal/driver_location/adapters/repository"
 )
 
 type DriverRepository interface {
@@ -11,9 +10,13 @@ type DriverRepository interface {
 }
 
 type LocationRepository interface {
-	SaveLocation(ctx context.Context, loc repository.LocationUpdate) error
+	SaveLocation(ctx context.Context, loc LocationUpdate) error
 }
 
 type Publisher interface {
 	PublishStatus(ctx context.Context, driverID, status, sessionID string) error
+}
+
+type WebSocketPort interface {
+	SendToDriver(ctx context.Context, driverID string, msg any) error
 }

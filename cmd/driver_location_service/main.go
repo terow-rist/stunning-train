@@ -14,10 +14,11 @@ import (
 	"ride-hail/internal/common/db"
 	"ride-hail/internal/common/log"
 	"ride-hail/internal/common/rabbitmq"
-	"ride-hail/internal/common/ws"
-	"ride-hail/internal/driver_location/adapters/api"
+	commonws "ride-hail/internal/common/ws"
+	api "ride-hail/internal/driver_location/adapters/api"
 	"ride-hail/internal/driver_location/adapters/queue"
 	"ride-hail/internal/driver_location/adapters/repository"
+	driverws "ride-hail/internal/driver_location/adapters/ws"
 	"ride-hail/internal/driver_location/app"
 )
 
@@ -35,7 +36,6 @@ func main() {
 	}
 	log.Info(ctx, logger, "config_loaded", "Configuration loaded successfully")
 
-	// Postgres
 	dbPool, err := db.ConnectPostgres(ctx, cfg.DB)
 	if err != nil {
 		log.Error(ctx, logger, "connect_db_fail", "Failed to connect to database", err)
@@ -43,7 +43,6 @@ func main() {
 	}
 	log.Info(ctx, logger, "db_connected", "Connected to PostgreSQL")
 
-	// RabbitMQ manager (handles reconnect loop internally)
 	rmq := rabbitmq.NewMQ(cfg.RMQ, logger)
 	if err := rmq.Connect(ctx); err != nil {
 		log.Error(ctx, logger, "rmq_connect_fail", "Failed to connect to RabbitMQ", err)
@@ -55,37 +54,39 @@ func main() {
 	}
 	log.Info(ctx, logger, "rmq_ready", "RabbitMQ topology declared")
 
-	// Repositories, publisher, and HTTP handler
+	hub := commonws.NewHub(logger)
 
 	driverRepo := repository.NewDriverRepository(dbPool)
 	locationRepo := repository.NewLocationRepository(dbPool)
 	publisher := queue.NewDriverPublisher(rmq, logger)
-	coreService := app.NewAppService(driverRepo, locationRepo, publisher)
 
-	handler := api.NewHandler(coreService, logger)
-	wsHandler := ws.NewWSHandler(logger)
+	wsTalker := driverws.NewTalker(hub)
+
+	coreService := app.NewAppService(driverRepo, locationRepo, publisher, wsTalker)
+
+	apiHandler := api.NewHandler(coreService, logger)
+	driverWSHandler := driverws.NewWSHandler(logger, hub)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ws/drivers/", wsHandler.HandleDriverWS)
-	mux.Handle("/", handler.Router()) // existing REST routes
+	mux.HandleFunc("/ws/drivers/", driverWSHandler.HandleDriverWS)
+	mux.Handle("/", apiHandler.Router())
 
-	// Start HTTP server in goroutine
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", 3001),
+		Addr:    fmt.Sprintf(":%d", cfg.WS.Port),
 		Handler: mux,
 	}
 
 	go func() {
-		log.Info(ctx, logger, "http_server_start", "Starting HTTP server")
+		log.Info(ctx, logger, "http_server_start", "Starting HTTP/WebSocket server")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error(ctx, logger, "http_server_fail", "HTTP server failed", err)
 			cancel()
 		}
 	}()
 
-	// Wait for termination signal
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
 	select {
 	case <-stop:
 		log.Info(ctx, logger, "shutdown_signal", "Shutdown signal received")
@@ -93,7 +94,6 @@ func main() {
 		log.Info(ctx, logger, "shutdown_ctx", "Context canceled")
 	}
 
-	// Graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
@@ -103,12 +103,12 @@ func main() {
 		log.Info(ctx, logger, "http_shutdown", "HTTP server stopped")
 	}
 
-	// Close RMQ and DB
 	rmq.Close()
 	dbPool.Close()
 
-	// wait a short moment for background goroutines/logs
 	time.Sleep(500 * time.Millisecond)
 	log.InfoX(logger, "shutdown_complete", "Driver & Location Service stopped")
-	_ = slog.New(slog.NewJSONHandler(os.Stdout, nil)) // no-op to satisfy gofumpt style of imports usage
+
+	// keep gofumpt happy
+	_ = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 }

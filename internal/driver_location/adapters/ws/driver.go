@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"ride-hail/internal/common/ws"
 	"strings"
 	"time"
 
@@ -12,15 +13,16 @@ import (
 
 type WSHandler struct {
 	logger   *slog.Logger
+	hub      *ws.Hub
 	upgrader websocket.Upgrader
 }
 
-// Constructor
-func NewWSHandler(logger *slog.Logger) *WSHandler {
+func NewWSHandler(logger *slog.Logger, hub *ws.Hub) *WSHandler {
 	return &WSHandler{
 		logger: logger,
+		hub:    hub,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true }, // later restrict to specific origins
+			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
 }
