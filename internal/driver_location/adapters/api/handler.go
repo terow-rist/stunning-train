@@ -18,7 +18,6 @@ type Handler struct {
 	logger     *slog.Logger
 }
 
-// NewHandler constructs API handler
 func NewHandler(appService *app.AppService, lg *slog.Logger) *Handler {
 	return &Handler{
 		appService: appService,
@@ -68,6 +67,28 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 	ctx = contextx.WithRequestID(ctx, contextx.GetRequestID(ctx))
 	start := time.Now()
 
+	// --- Step 1: Validate Authorization header ---
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, "missing or invalid Authorization header", http.StatusUnauthorized)
+		return
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	// TODO: Later verify JWT signature & extract claims
+	// For now, just simulate a valid token that contains the driver_id
+	if token == "" {
+		http.Error(w, "empty bearer token", http.StatusUnauthorized)
+		return
+	}
+
+	// (Optional) simulate check: token should contain driverID
+	if !strings.Contains(token, driverID) {
+		http.Error(w, "token does not match driver", http.StatusForbidden)
+		return
+	}
+
+	// --- Step 2: Decode request body ---
 	var req goOnlineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, h.logger, "invalid_body", "Unable to decode request body", err)
@@ -80,6 +101,7 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
+	// --- Step 3: Execute core use case ---
 	sessionID, err := h.appService.GoOnline(ctx, driverID, req.Latitude, req.Longitude)
 	if err != nil {
 		log.Error(ctx, h.logger, "go_online_fail", "Failed to execute GoOnline use case", err)
@@ -87,6 +109,7 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
+	// --- Step 4: Respond success ---
 	resp := goOnlineResponse{
 		Status:    "AVAILABLE",
 		SessionID: sessionID,
@@ -98,7 +121,8 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		log.Error(ctx, h.logger, "encode_response_fail", "Failed to encode response", err)
 	}
 
-	log.Info(ctx, h.logger, "driver_online", fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
+	log.Info(ctx, h.logger, "driver_online",
+		fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
 }
 
 func validCoords(lat, lng float64) bool {

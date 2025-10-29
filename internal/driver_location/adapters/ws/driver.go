@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"ride-hail/internal/common/ws"
+	"ride-hail/internal/driver_location/domain"
 	"strings"
 	"time"
 
@@ -25,17 +26,6 @@ func NewWSHandler(logger *slog.Logger, hub *ws.Hub) *WSHandler {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
-}
-
-// Message types
-type AuthMessage struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-}
-
-type ServerMessage struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
 }
 
 func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
@@ -63,15 +53,18 @@ func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
 	case ok := <-authCh:
 		if !ok {
 			h.logger.Warn("ws_auth_fail", "driver_id", driverID)
-			conn.WriteJSON(ServerMessage{Type: "error", Message: "auth failed"})
+			conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "auth failed"})
 			return
 		}
 		h.logger.Info("ws_auth_success", "driver_id", driverID)
-		conn.WriteJSON(ServerMessage{Type: "info", Message: "authenticated"})
+		conn.WriteJSON(domain.ServerMessage{Type: "info", Message: "authenticated"})
 	case <-time.After(5 * time.Second):
-		conn.WriteJSON(ServerMessage{Type: "error", Message: "auth timeout"})
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "auth timeout"})
 		return
 	}
+
+	h.hub.Add(driverID, conn)
+	defer h.hub.Remove(driverID)
 
 	// start keepalive
 	conn.SetPongHandler(func(appData string) error {
@@ -110,7 +103,7 @@ func (h *WSHandler) waitForAuth(conn *websocket.Conn, driverID string, result ch
 		return
 	}
 
-	var auth AuthMessage
+	var auth domain.AuthMessage
 	if err := json.Unmarshal(data, &auth); err != nil {
 		result <- false
 		return
