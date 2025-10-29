@@ -29,7 +29,6 @@ func (p *DriverPublisher) PublishStatus(ctx context.Context, driverID, status, s
 	if err != nil {
 		return fmt.Errorf("channel: %w", err)
 	}
-	// defer ch.Close()
 
 	msg := map[string]any{
 		"driver_id":  driverID,

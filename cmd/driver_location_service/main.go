@@ -14,9 +14,10 @@ import (
 	"ride-hail/internal/common/db"
 	"ride-hail/internal/common/log"
 	"ride-hail/internal/common/rabbitmq"
-	api "ride-hail/internal/driver_location/adapters/api"
+	"ride-hail/internal/driver_location/adapters/api"
 	"ride-hail/internal/driver_location/adapters/queue"
 	"ride-hail/internal/driver_location/adapters/repository"
+	"ride-hail/internal/driver_location/app"
 )
 
 func main() {
@@ -54,10 +55,13 @@ func main() {
 	log.Info(ctx, logger, "rmq_ready", "RabbitMQ topology declared")
 
 	// Repositories, publisher, and HTTP handler
+
 	driverRepo := repository.NewDriverRepository(dbPool)
 	locationRepo := repository.NewLocationRepository(dbPool)
 	publisher := queue.NewDriverPublisher(rmq, logger)
-	handler := api.NewHandler(driverRepo, locationRepo, publisher, logger)
+	coreService := app.NewAppService(driverRepo, locationRepo, publisher)
+
+	handler := api.NewHandler(coreService, logger)
 
 	// Start HTTP server in goroutine
 	server := &http.Server{
