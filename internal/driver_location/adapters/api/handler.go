@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"ride-hail/internal/common/contextx"
 	"ride-hail/internal/common/log"
 	"ride-hail/internal/driver_location/app"
-	"ride-hail/internal/driver_location/domain"
 )
 
 type Handler struct {
@@ -24,17 +22,6 @@ type Handler struct {
 
 func NewHandler(appService *app.AppService, lg *slog.Logger) *Handler {
 	return &Handler{appService: appService, logger: lg}
-}
-
-type goOnlineRequest struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-}
-
-type goOnlineResponse struct {
-	Status    string `json:"status"`
-	SessionID string `json:"session_id"`
-	Message   string `json:"message"`
 }
 
 func (h *Handler) Router() http.Handler {
@@ -61,12 +48,14 @@ func (h *Handler) driversPrefixHandler(w http.ResponseWriter, r *http.Request) {
 		h.handleGoOnline(ctx, w, r, driverID)
 	case r.Method == http.MethodPost && action == "offline":
 		h.handleGoOffline(ctx, w, r, driverID)
+	case r.Method == http.MethodPost && action == "location":
+		h.handleUpdateLocation(ctx, w, r, driverID)
 	default:
 		writeJSONError(ctx, w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
-// -------------------- DRIVER GO ONLINE --------------------
+// -------------------- DRIVER ACTIONS --------------------
 
 func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *http.Request, driverID string) {
 	ctx = contextx.WithRequestID(ctx, contextx.GetRequestID(ctx))
@@ -89,7 +78,6 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	// --- Parse body ---
 	var req goOnlineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, h.logger, "invalid_body", "Unable to decode request body", err)
@@ -97,7 +85,6 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	// --- Core use case ---
 	sessionID, err := h.appService.GoOnline(ctx, driverID, req.Latitude, req.Longitude)
 	if err != nil {
 		h.handleAppError(ctx, w, err, driverID)
@@ -114,9 +101,6 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 	log.Info(ctx, h.logger, "driver_online",
 		fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
 }
-
-// -------------------- DRIVER GO OFFLINE --------------------
-
 func (h *Handler) handleGoOffline(ctx context.Context, w http.ResponseWriter, r *http.Request, driverID string) {
 	ctx = contextx.WithRequestID(ctx, contextx.GetRequestID(ctx))
 	start := time.Now()
@@ -155,46 +139,41 @@ func (h *Handler) handleGoOffline(ctx context.Context, w http.ResponseWriter, r 
 		fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
 }
 
-// -------------------- ERROR HANDLING --------------------
+func (h *Handler) handleUpdateLocation(ctx context.Context, w http.ResponseWriter, r *http.Request, driverID string) {
+	ctx = contextx.WithRequestID(ctx, contextx.GetRequestID(ctx))
+	start := time.Now()
 
-func (h *Handler) handleAppError(ctx context.Context, w http.ResponseWriter, err error, driverID string) {
-	switch {
-	case errors.Is(err, domain.ErrInvalidCoordinates):
-		writeJSONError(ctx, w, http.StatusBadRequest, "invalid coordinates")
-	case errors.Is(err, domain.ErrInvalidDriverID):
-		writeJSONError(ctx, w, http.StatusBadRequest, "invalid driver ID")
-	case errors.Is(err, domain.ErrPublishFailed):
-		log.Error(ctx, h.logger, "publish_fail driver", driverID, err)
-		writeJSONError(ctx, w, http.StatusInternalServerError, "status publish failed")
-	case errors.Is(err, domain.ErrWebSocketSend):
-		log.Warn(ctx, h.logger, "ws_send_fail driver", driverID, err)
-		writeJSONError(ctx, w, http.StatusAccepted, "status updated but ws notification failed")
-	case errors.Is(err, domain.ErrAlreadyOnline):
-		writeJSONError(ctx, w, http.StatusConflict, "driver already online")
-	case errors.Is(err, domain.ErrAlreadyOffline):
-		writeJSONError(ctx, w, http.StatusConflict, "driver already offline")
-	default:
-		log.Error(ctx, h.logger, "internal_error driver", driverID, err)
-		writeJSONError(ctx, w, http.StatusInternalServerError, "internal server error")
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		writeJSONError(ctx, w, http.StatusUnauthorized, "missing bearer token")
+		return
 	}
-}
-
-// -------------------- RESPONSE HELPERS --------------------
-
-func writeJSONError(ctx context.Context, w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	resp := map[string]any{
-		"error":      message,
-		"code":       status,
-		"request_id": contextx.GetRequestID(ctx),
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := auth.VerifyDriverJWT(token)
+	if err != nil {
+		writeJSONError(ctx, w, http.StatusUnauthorized, "invalid token")
+		return
 	}
-	_ = json.NewEncoder(w).Encode(resp)
-}
+	if claims.DriverID != driverID {
+		writeJSONError(ctx, w, http.StatusForbidden, "forbidden: token does not match driver ID")
+		return
+	}
 
-func writeJSONInfo(ctx context.Context, w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	var req updateLocationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error(ctx, h.logger, "invalid_body", "Unable to decode location body", err)
+		writeJSONError(ctx, w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	result, err := h.appService.UpdateLocation(ctx, driverID, req.Latitude, req.Longitude, req.AccuracyMeters, req.SpeedKmh, req.HeadingDegrees)
+	if err != nil {
+		h.handleAppError(ctx, w, err, driverID)
+		return
+	}
+
+	writeJSONInfo(ctx, w, http.StatusOK, result)
+
+	log.Info(ctx, h.logger, "location_update",
+		fmt.Sprintf("driver=%s duration_ms=%d lat=%.6f lng=%.6f", driverID, time.Since(start).Milliseconds(), req.Latitude, req.Longitude))
 }

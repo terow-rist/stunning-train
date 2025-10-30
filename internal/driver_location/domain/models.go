@@ -24,6 +24,11 @@ type LocationUpdate struct {
 	RecordedAt     time.Time
 }
 
+type LocationResult struct {
+	CoordinateID string    `json:"coordinate_id"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type RideRequest struct {
 	RideID        string  `json:"ride_id"`
 	RideNumber    string  `json:"ride_number"`

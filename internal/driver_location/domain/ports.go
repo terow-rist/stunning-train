@@ -8,10 +8,12 @@ type DriverRepository interface {
 	StartSession(ctx context.Context, driverID string) (string, error)
 	UpdateStatus(ctx context.Context, driverID, status string) error
 	EndSession(ctx context.Context, driverID string) (string, SessionSummary, error)
+	HasActiveSession(ctx context.Context, driverID string) (bool, error)
 }
 
 type LocationRepository interface {
 	SaveLocation(ctx context.Context, loc LocationUpdate) error
+	UpdateLocation(ctx context.Context, loc LocationUpdate) (LocationResult, error)
 }
 
 type Publisher interface {

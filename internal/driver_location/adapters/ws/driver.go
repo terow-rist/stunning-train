@@ -87,24 +87,20 @@ func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
 	pingTicker := time.NewTicker(pingPeriod)
 	defer pingTicker.Stop()
 
-	// Every received pong extends read deadline
 	conn.SetPongHandler(func(string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
-	// initial read deadline
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 
 	for {
 		select {
 		case <-pingTicker.C:
-			// send ping
 			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 				h.logger.Warn("ws_ping_fail", "driver_id", driverID, "error", err)
 				return
 			}
 		default:
-			// read incoming message (blocks until message or read-deadline timeout)
 			if _, msg, err := conn.ReadMessage(); err != nil {
 				h.logger.Warn("ws_read_or_pong_timeout", "driver_id", driverID, "error", err)
 				return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"time"
 
 	"ride-hail/internal/driver_location/domain"
 )
@@ -30,8 +31,6 @@ func NewAppService(
 	}
 }
 
-// GoOnline transitions a driver into AVAILABLE status,
-// starts a new session, saves location, and notifies systems.
 func (a *AppService) GoOnline(ctx context.Context, driverID string, lat, lng float64) (string, error) {
 	if driverID == "" {
 		return "", domain.ErrInvalidDriverID
@@ -82,29 +81,24 @@ func (a *AppService) GoOnline(ctx context.Context, driverID string, lat, lng flo
 	return sessionID, nil
 }
 
-// GoOffline ends the driver's session, updates status, and returns a summary.
 func (a *AppService) GoOffline(ctx context.Context, driverID string) (string, domain.SessionSummary, error) {
 	if driverID == "" {
 		return "", domain.SessionSummary{}, domain.ErrInvalidDriverID
 	}
 
-	// --- stop active session (repository implementation decides behavior) ---
 	sessionID, summary, err := a.driverRepo.EndSession(ctx, driverID)
 	if err != nil {
 		return "", domain.SessionSummary{}, fmt.Errorf("end session: %w", err)
 	}
 
-	// --- update status to OFFLINE ---
 	if err := a.driverRepo.UpdateStatus(ctx, driverID, "OFFLINE"); err != nil {
 		return "", domain.SessionSummary{}, fmt.Errorf("update status: %w", err)
 	}
 
-	// --- publish status event ---
 	if err := a.publisher.PublishStatus(ctx, driverID, "OFFLINE", sessionID); err != nil {
 		return "", domain.SessionSummary{}, fmt.Errorf("%w: %v", domain.ErrPublishFailed, err)
 	}
 
-	// --- send WebSocket notification ---
 	if a.wsPort != nil {
 		msg := map[string]any{
 			"type":    "status_update",
@@ -117,4 +111,48 @@ func (a *AppService) GoOffline(ctx context.Context, driverID string) (string, do
 	}
 
 	return sessionID, summary, nil
+}
+
+func (a *AppService) UpdateLocation(ctx context.Context, driverID string, lat, lng, acc, speed, heading float64) (domain.LocationResult, error) {
+	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+		return domain.LocationResult{}, domain.ErrInvalidCoordinates
+	}
+
+	active, err := a.driverRepo.HasActiveSession(ctx, driverID)
+	if err != nil {
+		return domain.LocationResult{}, fmt.Errorf("check active session: %w", err)
+	}
+	if !active {
+		return domain.LocationResult{}, domain.ErrAlreadyOffline
+	}
+
+	loc := domain.LocationUpdate{
+		DriverID:       driverID,
+		Latitude:       lat,
+		Longitude:      lng,
+		AccuracyMeters: acc,
+		SpeedKmh:       speed,
+		HeadingDegrees: heading,
+		RecordedAt:     time.Now().UTC(),
+	}
+
+	result, err := a.locationRepo.UpdateLocation(ctx, loc)
+	if err != nil {
+		return domain.LocationResult{}, fmt.Errorf("save location: %w", err)
+	}
+
+	if a.wsPort != nil {
+		msg := map[string]any{
+			"type":      "location_update",
+			"latitude":  lat,
+			"longitude": lng,
+			"speed":     speed,
+			"heading":   heading,
+			"accuracy":  acc,
+			"timestamp": loc.RecordedAt,
+		}
+		_ = a.wsPort.SendToDriver(ctx, driverID, msg)
+	}
+
+	return result, nil
 }

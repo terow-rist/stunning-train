@@ -7,6 +7,7 @@ import (
 	"ride-hail/internal/driver_location/domain"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -57,6 +58,64 @@ func (r *LocationRepository) SaveLocation(ctx context.Context, loc domain.Locati
 		return fmt.Errorf("commit tx: %w", err)
 	}
 	return nil
+}
+
+func (r *LocationRepository) UpdateLocation(ctx context.Context, loc domain.LocationUpdate) (domain.LocationResult, error) {
+	if loc.RecordedAt.IsZero() {
+		loc.RecordedAt = time.Now().UTC()
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.LocationResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var coordID string
+	err = tx.QueryRow(ctx, `
+		UPDATE coordinates
+		SET latitude = $2,
+		    longitude = $3,
+		    updated_at = now()
+		WHERE entity_id = $1 AND entity_type = 'driver' AND is_current = true
+		RETURNING id
+	`, loc.DriverID, loc.Latitude, loc.Longitude).Scan(&coordID)
+
+	if err == pgx.ErrNoRows {
+		coordID, err = newUUID()
+		if err != nil {
+			return domain.LocationResult{}, fmt.Errorf("generate uuid: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO coordinates (id, entity_id, entity_type, address, latitude, longitude, is_current, created_at, updated_at)
+			VALUES ($1, $2, 'driver', '', $3, $4, true, now(), now())
+		`, coordID, loc.DriverID, loc.Latitude, loc.Longitude)
+		if err != nil {
+			return domain.LocationResult{}, fmt.Errorf("insert coordinates: %w", err)
+		}
+	} else if err != nil {
+		return domain.LocationResult{}, fmt.Errorf("update coordinates: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO location_history (
+			id, driver_id, latitude, longitude, accuracy_meters,
+			speed_kmh, heading_degrees, recorded_at
+		)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+	`, loc.DriverID, loc.Latitude, loc.Longitude, loc.AccuracyMeters, loc.SpeedKmh, loc.HeadingDegrees, loc.RecordedAt)
+	if err != nil {
+		return domain.LocationResult{}, fmt.Errorf("insert location_history: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.LocationResult{}, fmt.Errorf("commit tx: %w", err)
+	}
+
+	return domain.LocationResult{
+		CoordinateID: coordID,
+		UpdatedAt:    loc.RecordedAt,
+	}, nil
 }
 
 // newUUID generates a random RFC 4122-compliant UUID v4

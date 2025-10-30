@@ -144,3 +144,17 @@ func (r *DriverRepository) EndSession(ctx context.Context, driverID string) (str
 
 	return sessionID, summary, nil
 }
+
+func (r *DriverRepository) HasActiveSession(ctx context.Context, driverID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM driver_sessions
+			WHERE driver_id = $1 AND ended_at IS NULL
+		)
+	`, driverID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check active session: %w", err)
+	}
+	return exists, nil
+}
