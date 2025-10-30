@@ -55,17 +55,16 @@ func main() {
 	log.Info(ctx, logger, "rmq_ready", "RabbitMQ topology declared")
 
 	hub := commonws.NewHub(logger)
+	driverWSHandler := driverws.NewWSHandler(logger, hub)
+	wsTalker := driverws.NewTalker(hub)
 
 	driverRepo := repository.NewDriverRepository(dbPool)
 	locationRepo := repository.NewLocationRepository(dbPool)
 	publisher := queue.NewDriverPublisher(rmq, logger)
 
-	wsTalker := driverws.NewTalker(hub)
-
 	coreService := app.NewAppService(driverRepo, locationRepo, publisher, wsTalker)
 
 	apiHandler := api.NewHandler(coreService, logger)
-	driverWSHandler := driverws.NewWSHandler(logger, hub)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/drivers/", driverWSHandler.HandleDriverWS)

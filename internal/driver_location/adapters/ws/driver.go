@@ -2,11 +2,14 @@ package ws
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
-	"ride-hail/internal/common/ws"
 	"strings"
 	"time"
+
+	"log/slog"
+	"ride-hail/internal/common/auth"
+	"ride-hail/internal/common/ws"
+	"ride-hail/internal/driver_location/domain"
 
 	"github.com/gorilla/websocket"
 )
@@ -27,25 +30,12 @@ func NewWSHandler(logger *slog.Logger, hub *ws.Hub) *WSHandler {
 	}
 }
 
-// Message types
-type AuthMessage struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-}
-
-type ServerMessage struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
-}
-
 func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
-	// URL: /ws/drivers/{driver_id}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/ws/drivers/"), "/")
-	if len(parts) < 1 || parts[0] == "" {
+	driverID := strings.TrimPrefix(r.URL.Path, "/ws/drivers/")
+	if driverID == "" {
 		http.Error(w, "missing driver id", http.StatusBadRequest)
 		return
 	}
-	driverID := parts[0]
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -56,71 +46,71 @@ func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("ws_connected", "driver_id", driverID)
 
-	authCh := make(chan bool, 1)
-	go h.waitForAuth(conn, driverID, authCh)
-
-	select {
-	case ok := <-authCh:
-		if !ok {
-			h.logger.Warn("ws_auth_fail", "driver_id", driverID)
-			conn.WriteJSON(ServerMessage{Type: "error", Message: "auth failed"})
-			return
-		}
-		h.logger.Info("ws_auth_success", "driver_id", driverID)
-		conn.WriteJSON(ServerMessage{Type: "info", Message: "authenticated"})
-	case <-time.After(5 * time.Second):
-		conn.WriteJSON(ServerMessage{Type: "error", Message: "auth timeout"})
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		h.logger.Warn("ws_auth_timeout_or_fail", "driver_id", driverID, "error", err)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "auth timeout or failed"})
 		return
 	}
 
-	// start keepalive
-	conn.SetPongHandler(func(appData string) error {
+	var authMsg domain.AuthMessage
+	if err := json.Unmarshal(data, &authMsg); err != nil {
+		h.logger.Warn("ws_auth_unmarshal_fail", "driver_id", driverID, "error", err)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "invalid auth message"})
+		return
+	}
+	if authMsg.Type != "auth" || !strings.HasPrefix(authMsg.Token, "Bearer ") {
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "bad auth format"})
+		return
+	}
+	tokenStr := strings.TrimPrefix(authMsg.Token, "Bearer ")
+	claims, err := auth.VerifyDriverJWT(tokenStr)
+	if err != nil {
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "invalid token"})
+		return
+	}
+	if claims.DriverID != driverID {
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "token-driver mismatch"})
+		return
+	}
+
+	h.logger.Info("ws_auth_success", "driver_id", driverID)
+	h.hub.Add(driverID, conn)
+	defer h.hub.Remove(driverID)
+	conn.WriteJSON(domain.ServerMessage{Type: "info", Message: "authenticated"})
+
+	const (
+		pingPeriod = 30 * time.Second
+		pongWait   = 60 * time.Second
+	)
+	pingTicker := time.NewTicker(pingPeriod)
+	defer pingTicker.Stop()
+
+	// Every received pong extends read deadline
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	// initial read deadline
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-pingTicker.C:
+			// send ping
 			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 				h.logger.Warn("ws_ping_fail", "driver_id", driverID, "error", err)
 				return
 			}
 		default:
-			// echo simple received messages
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				h.logger.Warn("ws_read_fail", "driver_id", driverID, "error", err)
+			// read incoming message (blocks until message or read-deadline timeout)
+			if _, msg, err := conn.ReadMessage(); err != nil {
+				h.logger.Warn("ws_read_or_pong_timeout", "driver_id", driverID, "error", err)
 				return
+			} else {
+				h.logger.Info("ws_msg", "driver_id", driverID, "msg", string(msg))
 			}
-			h.logger.Info("ws_msg", "driver_id", driverID, "msg", string(msg))
 		}
 	}
-}
-
-func (h *WSHandler) waitForAuth(conn *websocket.Conn, driverID string, result chan<- bool) {
-	defer close(result)
-
-	// wait for the first message
-	_, data, err := conn.ReadMessage()
-	if err != nil {
-		result <- false
-		return
-	}
-
-	var auth AuthMessage
-	if err := json.Unmarshal(data, &auth); err != nil {
-		result <- false
-		return
-	}
-
-	if auth.Type != "auth" || !strings.HasPrefix(auth.Token, "Bearer ") {
-		result <- false
-		return
-	}
-
-	// TODO: later verify JWT here
-	result <- true
 }

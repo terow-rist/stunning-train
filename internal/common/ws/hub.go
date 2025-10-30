@@ -7,14 +7,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Hub stores all active WebSocket connections keyed by driverID.
+// Hub stores all active WebSocket connections keyed by user/service ID.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[string]*websocket.Conn
 	logger  *slog.Logger
 }
 
-// NewHub creates a new hub instance.
 func NewHub(logger *slog.Logger) *Hub {
 	return &Hub{
 		clients: make(map[string]*websocket.Conn),
@@ -22,35 +21,46 @@ func NewHub(logger *slog.Logger) *Hub {
 	}
 }
 
-// Add registers a new connection for driverID (replaces old if exists).
-func (h *Hub) Add(driverID string, conn *websocket.Conn) {
+// Add registers a new connection under a unique ID (driver, passenger, etc.).
+func (h *Hub) Add(id string, conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if old, ok := h.clients[driverID]; ok {
+	if old, ok := h.clients[id]; ok {
 		_ = old.Close()
 	}
-	h.clients[driverID] = conn
-	h.logger.Info("ws_registered", "driver_id", driverID)
+	h.clients[id] = conn
+	h.logger.Info("ws_registered", "id", id)
 }
 
-// Remove deletes a driver connection.
-func (h *Hub) Remove(driverID string) {
+// Remove deletes and closes a connection.
+func (h *Hub) Remove(id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if conn, ok := h.clients[driverID]; ok {
+	if conn, ok := h.clients[id]; ok {
 		_ = conn.Close()
-		delete(h.clients, driverID)
-		h.logger.Info("ws_removed", "driver_id", driverID)
+		delete(h.clients, id)
+		h.logger.Info("ws_removed", "id", id)
 	}
 }
 
-// Send sends a JSON message to a connected driver if exists.
-func (h *Hub) Send(driverID string, msg any) error {
+// Send transmits a JSON message to a connected user/service.
+func (h *Hub) Send(id string, msg any) error {
 	h.mu.RLock()
-	conn, ok := h.clients[driverID]
+	conn, ok := h.clients[id]
 	h.mu.RUnlock()
 	if !ok {
-		return nil // driver not connected
+		return nil // user not connected
 	}
 	return conn.WriteJSON(msg)
+}
+
+// ListConnected returns all connected IDs (for debugging/admin tools).
+func (h *Hub) ListConnected() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	keys := make([]string, 0, len(h.clients))
+	for k := range h.clients {
+		keys = append(keys, k)
+	}
+	return keys
 }

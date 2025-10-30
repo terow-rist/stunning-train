@@ -41,3 +41,13 @@ type RideRequest struct {
 	} `json:"destination_location"`
 	CorrelationID string `json:"correlation_id"`
 }
+
+type AuthMessage struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
+}
+
+type ServerMessage struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}

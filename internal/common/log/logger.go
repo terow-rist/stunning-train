@@ -38,6 +38,29 @@ func Info(ctx context.Context, log *slog.Logger, action, message string) {
 	)
 }
 
+func Warn(ctx context.Context, log *slog.Logger, action, message string, err error) {
+	if err == nil {
+		log.Warn(message,
+			"action", action,
+			"hostname", hostname(),
+			"request_id", contextx.GetRequestID(ctx),
+			"ride_id", contextx.GetRideID(ctx),
+		)
+		return
+	}
+
+	log.Warn(message,
+		"action", action,
+		"hostname", hostname(),
+		"request_id", contextx.GetRequestID(ctx),
+		"ride_id", contextx.GetRideID(ctx),
+		slog.Group("error",
+			"msg", err.Error(),
+			"stack", shortStack(3, 8),
+		),
+	)
+}
+
 func Error(ctx context.Context, log *slog.Logger, action, message string, err error) {
 	if err == nil {
 		log.Error(message,
@@ -86,7 +109,6 @@ func ErrorX(log *slog.Logger, action, message string, err error) {
 		),
 	)
 }
-
 
 func shortStack(skip, max int) string {
 	pcs := make([]uintptr, 64)

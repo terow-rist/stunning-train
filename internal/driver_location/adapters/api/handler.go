@@ -3,14 +3,18 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
+	"strings"
+	"time"
+
+	"log/slog"
+	"ride-hail/internal/common/auth"
 	"ride-hail/internal/common/contextx"
 	"ride-hail/internal/common/log"
 	"ride-hail/internal/driver_location/app"
-	"strings"
-	"time"
+	"ride-hail/internal/driver_location/domain"
 )
 
 type Handler struct {
@@ -18,12 +22,8 @@ type Handler struct {
 	logger     *slog.Logger
 }
 
-// NewHandler constructs API handler
 func NewHandler(appService *app.AppService, lg *slog.Logger) *Handler {
-	return &Handler{
-		appService: appService,
-		logger:     lg,
-	}
+	return &Handler{appService: appService, logger: lg}
 }
 
 type goOnlineRequest struct {
@@ -68,6 +68,22 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 	ctx = contextx.WithRequestID(ctx, contextx.GetRequestID(ctx))
 	start := time.Now()
 
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := auth.VerifyDriverJWT(token)
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	if claims.DriverID != driverID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	var req goOnlineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, h.logger, "invalid_body", "Unable to decode request body", err)
@@ -75,15 +91,9 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	if !validCoords(req.Latitude, req.Longitude) {
-		http.Error(w, "invalid coordinates", http.StatusBadRequest)
-		return
-	}
-
 	sessionID, err := h.appService.GoOnline(ctx, driverID, req.Latitude, req.Longitude)
 	if err != nil {
-		log.Error(ctx, h.logger, "go_online_fail", "Failed to execute GoOnline use case", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.handleAppError(ctx, w, err, driverID)
 		return
 	}
 
@@ -92,15 +102,27 @@ func (h *Handler) handleGoOnline(ctx context.Context, w http.ResponseWriter, r *
 		SessionID: sessionID,
 		Message:   "You are now online and ready to accept rides",
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Error(ctx, h.logger, "encode_response_fail", "Failed to encode response", err)
-	}
+	json.NewEncoder(w).Encode(resp)
 
-	log.Info(ctx, h.logger, "driver_online", fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
+	log.Info(ctx, h.logger, "driver_online",
+		fmt.Sprintf("driver=%s duration_ms=%d", driverID, time.Since(start).Milliseconds()))
 }
 
-func validCoords(lat, lng float64) bool {
-	return !(lat < -90 || lat > 90 || lng < -180 || lng > 180)
+func (h *Handler) handleAppError(ctx context.Context, w http.ResponseWriter, err error, driverID string) {
+	switch {
+	case errors.Is(err, domain.ErrInvalidCoordinates):
+		http.Error(w, "invalid coordinates", http.StatusBadRequest)
+	case errors.Is(err, domain.ErrInvalidDriverID):
+		http.Error(w, "invalid driver ID", http.StatusBadRequest)
+	case errors.Is(err, domain.ErrPublishFailed):
+		log.Error(ctx, h.logger, "publish_fail driver", driverID, err)
+		http.Error(w, "status publish failed", http.StatusInternalServerError)
+	case errors.Is(err, domain.ErrWebSocketSend):
+		log.Warn(ctx, h.logger, "ws_send_fail driver", driverID, err)
+		http.Error(w, "status updated but ws notification failed", http.StatusAccepted)
+	default:
+		log.Error(ctx, h.logger, "internal_error driver", driverID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
