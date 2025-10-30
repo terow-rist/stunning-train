@@ -47,26 +47,47 @@ func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("ws_connected", "driver_id", driverID)
 
-	authCh := make(chan bool, 1)
-	go h.waitForAuth(conn, driverID, authCh)
-
-	select {
-	case ok := <-authCh:
-		if !ok {
-			h.logger.Warn("ws_auth_fail", "driver_id", driverID)
-			conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "auth failed"})
-			return
-		}
-		h.logger.Info("ws_auth_success", "driver_id", driverID)
-		conn.WriteJSON(domain.ServerMessage{Type: "info", Message: "authenticated"})
-	case <-time.After(5 * time.Second):
-		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "auth timeout"})
+	h.logger.Info("ws_wait_auth", "driver_id", driverID)
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		h.logger.Warn("ws_auth_read_fail", "driver_id", driverID, "error", err)
 		return
 	}
 
-	h.hub.Add(driverID, conn)
-	defer h.hub.Remove(driverID)
+	var authMsg domain.AuthMessage
+	if err := json.Unmarshal(data, &authMsg); err != nil {
+		h.logger.Warn("ws_auth_unmarshal_fail", "driver_id", driverID, "error", err)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "invalid auth message"})
+		return
+	}
+	h.logger.Info("ws_auth_parsed", "driver_id", driverID, "type", authMsg.Type, "token", authMsg.Token)
 
+	if authMsg.Type != "auth" || !strings.HasPrefix(authMsg.Token, "Bearer ") {
+		h.logger.Warn("ws_auth_bad_format", "driver_id", driverID, "token", authMsg.Token)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "bad auth format"})
+		return
+	}
+
+	tokenStr := strings.TrimPrefix(authMsg.Token, "Bearer ")
+	h.logger.Info("ws_auth_verifying", "driver_id", driverID)
+	claims, err := auth.VerifyDriverJWT(tokenStr)
+	if err != nil {
+		h.logger.Warn("ws_auth_token_invalid", "driver_id", driverID, "error", err)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "invalid token"})
+		return
+	}
+
+	if claims.DriverID != driverID {
+		h.logger.Warn("ws_auth_id_mismatch", "driver_id", driverID, "claims_driver_id", claims.DriverID)
+		conn.WriteJSON(domain.ServerMessage{Type: "error", Message: "token-driver mismatch"})
+		return
+	}
+
+	h.logger.Info("ws_auth_success", "driver_id", driverID)
+	h.hub.Add(driverID, conn)
+	conn.WriteJSON(domain.ServerMessage{Type: "info", Message: "authenticated"})
+
+	conn.SetPongHandler(func(appData string) error { return nil })
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -77,40 +98,15 @@ func (h *WSHandler) HandleDriverWS(w http.ResponseWriter, r *http.Request) {
 				h.logger.Warn("ws_ping_fail", "driver_id", driverID, "error", err)
 				return
 			}
+			h.logger.Debug("ws_ping_sent", "driver_id", driverID)
 		default:
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				h.logger.Warn("ws_read_fail", "driver_id", driverID, "error", err)
+				h.hub.Remove(driverID)
 				return
 			}
 			h.logger.Info("ws_msg", "driver_id", driverID, "msg", string(msg))
 		}
 	}
-}
-
-func (h *WSHandler) waitForAuth(conn *websocket.Conn, driverID string, result chan<- bool) {
-	defer close(result)
-	_, data, err := conn.ReadMessage()
-	if err != nil {
-		result <- false
-		return
-	}
-
-	var authMsg domain.AuthMessage
-	if err := json.Unmarshal(data, &authMsg); err != nil {
-		result <- false
-		return
-	}
-	if authMsg.Type != "auth" || !strings.HasPrefix(authMsg.Token, "Bearer ") {
-		result <- false
-		return
-	}
-	token := strings.TrimPrefix(authMsg.Token, "Bearer ")
-
-	claims, err := auth.VerifyDriverJWT(token)
-	if err != nil || claims.DriverID != driverID {
-		result <- false
-		return
-	}
-	result <- true
 }
