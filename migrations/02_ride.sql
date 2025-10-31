@@ -58,7 +58,7 @@ values
 
 -- Coordinates table for real-time location tracking
 create table coordinates (
-    id uuid primary key,
+    id uuid primary key default gen_random_uuid(),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     entity_id uuid not null, -- driver_id or passenger_id
@@ -138,14 +138,5 @@ Example event_data field:
   "estimated_arrival": "2024-12-16T10:35:00Z"
 }
 */
-
-INSERT INTO users (id, email, role, status, password_hash) 
-VALUES (
-    '550e8400-e29b-41d4-a716-446655440001',
-    'passenger@example.com',
-    'PASSENGER',
-    'ACTIVE',
-    'hashed_password_here'
-);
 
 commit;
