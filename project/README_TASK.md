@@ -96,7 +96,7 @@ This system follows Service-Oriented Architecture (SOA) principles, where each s
 - **Composable** - Services can be combined to create complex business workflows
 - **Standards-based** - Uses standard protocols (HTTP/REST, WebSocket, AMQP)
 - **Self-contained** - Each service owns its domain logic and data
-- **Shared Database** - Multiple services can share a common database for consistency
+- **general Database** - Multiple services can share a common database for consistency
 
 Three microservices communicate through PostgreSQL and RabbitMQ to handle the complete ride-hailing workflow:
 

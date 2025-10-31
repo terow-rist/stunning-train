@@ -28,7 +28,7 @@ type WSDriverRideOffer struct {
 	Envelope
 }
 
-// В internal/shared/contracts/ws_event.go
+// В internal/general/contracts/ws_event.go
 type WSPassengerLocationUpdate struct {
 	Type           string    `json:"type"` // "driver_location_update"
 	RideID         string    `json:"ride_id"`

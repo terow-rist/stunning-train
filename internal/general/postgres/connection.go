@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"ride-hail/internal/shared/config"
-	"ride-hail/internal/shared/logger"
+	"ride-hail/internal/general/config"
+	"ride-hail/internal/general/logger"
 	"strconv"
 	"time"
 

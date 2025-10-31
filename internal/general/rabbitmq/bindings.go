@@ -2,7 +2,7 @@ package rabbitmq
 
 import (
 	"fmt"
-	"ride-hail/internal/shared/contracts"
+	"ride-hail/internal/general/contracts"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

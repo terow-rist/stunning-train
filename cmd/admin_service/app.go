@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"ride-hail/internal/asoftwarepp/admindashboard/service"
 	"ride-hail/internal/general/config"
 	"ride-hail/internal/general/jwt"
 	"ride-hail/internal/general/logger"
 	"ride-hail/internal/general/postgres"
-	"ride-hail/internal/software/admindashboard/handler"
+	"ride-hail/internal/software/adminboard/handler"
+	"ride-hail/internal/software/adminboard/service"
 )
 
 // Run wires the admin dashboard service and blocks until ctx is cancelled.

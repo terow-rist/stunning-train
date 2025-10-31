@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"ride-hail/internal/shared/config"
-	"ride-hail/internal/shared/logger"
+	"ride-hail/internal/general/config"
+	"ride-hail/internal/general/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

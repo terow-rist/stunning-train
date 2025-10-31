@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"ride-hail/internal/shared/contracts"
+	"ride-hail/internal/general/contracts"
 
 	"github.com/gorilla/websocket"
 )

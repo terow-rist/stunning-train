@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"ride-hail/internal/domain/driver"
-	"ride-hail/internal/shared/contracts"
+	"ride-hail/internal/general/contracts"
 	"time"
 
 	"github.com/gorilla/websocket"

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"ride-hail/internal/domain/user"
+	"ride-hail/internal/general/jwt"
+	"ride-hail/internal/general/logger"
+	"ride-hail/internal/general/rabbitmq"
 	"ride-hail/internal/ports"
-	"ride-hail/internal/shared/jwt"
-	"ride-hail/internal/shared/logger"
-	"ride-hail/internal/shared/rabbitmq"
 
 	"github.com/gorilla/websocket"
 )
